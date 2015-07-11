@@ -40,8 +40,8 @@ static char *port = "7471";
 
 struct rdma_cm_id *id;
 struct ibv_mr *mr;
-uint8_t send_msg[16];
-uint8_t recv_msg[16];
+uint8_t send_msg[16] = "sent from client";
+uint8_t recv_msg[16] = "recv from client";
 
 static int run(void)
 {
