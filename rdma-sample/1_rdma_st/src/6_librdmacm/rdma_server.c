@@ -119,6 +119,9 @@ static int run(void)
 		return ret;
 	}
 
+    printf("send_msg ---> %s\n", send_msg);
+    printf("recv_msg ---> %s\n", recv_msg);
+
 	rdma_disconnect(id);
 	rdma_dereg_mr(mr);
 	rdma_destroy_ep(id);
