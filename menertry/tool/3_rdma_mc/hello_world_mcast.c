@@ -79,7 +79,7 @@ for help run: ./hello_world_mcast -h
 #include <sys/time.h>
 #include <arpa/inet.h>
 #include <infiniband/verbs.h>
-/*#include <infiniband/umad.h>*/
+#include <infiniband/umad.h>
 #include <infiniband/arch.h> /* for htonll */
 
 #define MAX_POLL_CQ_TIMEOUT 10000 /* poll CQ timeout in milisec */
