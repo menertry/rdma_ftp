@@ -43,8 +43,8 @@ static char *port = "7471";
 
 struct rdma_cm_id *listen_id, *id;
 struct ibv_mr *mr;
-char send_msg = SEND_MSG;
-char recv_msg = RECV_MSG;
+char send_msg[] = SEND_MSG;
+char recv_msg[] = RECV_MSG;
 
 static int run(void)
 {
