@@ -83,6 +83,8 @@ int on_disconnect(struct rdma_cm_id *id)
 int on_event(struct rdma_cm_event *event)
 {
 	int r = 0;
+
+    printf("--->%s\n", rdma_event_str(event->event));
 	
 	if (event->event == RDMA_CM_EVENT_CONNECT_REQUEST)
 		r = on_connect_request(event->id);
