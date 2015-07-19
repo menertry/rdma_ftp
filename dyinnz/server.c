@@ -112,6 +112,9 @@ int main(int argc, char *argv[]) {
 
     // TODO
     event_set(event_listen, channel->fd, EV_READ | EV_PERSIST, rdma_event_handle, NULL);
+    event_base_set(base, event_listen);
+    event_add(event_listen, NULL);
+    event_base_dispatch(base);
 
     // Release resources 
     event_base_free(base);
