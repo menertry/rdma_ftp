@@ -83,8 +83,10 @@ int
 init_rdma_listen(struct Setting *setting, struct RDMAContext *context) {
     struct rdma_addrinfo    hints,
                             *res = NULL;
+	struct ibv_qp_init_attr attr;
     int                     ret = 0;
 
+    memset(&hints, 0, sizeof(hints));
     hints.ai_flags = RAI_PASSIVE;
 	hints.ai_port_space = RDMA_PS_TCP;
     if (0 != rdma_getaddrinfo(NULL, setting->listen_port, &hints, &res)) {
@@ -92,7 +94,13 @@ init_rdma_listen(struct Setting *setting, struct RDMAContext *context) {
         return -1;
     }
 
-    ret = rdma_create_ep(&context->listen_id, res, NULL, NULL);
+	memset(&attr, 0, sizeof attr);
+	attr.cap.max_send_wr = attr.cap.max_recv_wr = 1;
+	attr.cap.max_send_sge = attr.cap.max_recv_sge = 1;
+	attr.cap.max_inline_data = 16;
+	attr.sq_sig_all = 1;
+	
+    ret = rdma_create_ep(&context->listen_id, res, NULL, &attr);
 	rdma_freeaddrinfo(res);
 	if (0 != ret) {
         perror("rdma_create_ep");
