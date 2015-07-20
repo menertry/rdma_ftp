@@ -13,7 +13,7 @@
 
 struct Setting {
     int         cq_number;
-    int         listen_port; 
+    char        listen_port[10];    /* 10 is enough to hold the port */
 };
 
 struct RDMAContext {
@@ -47,7 +47,7 @@ struct RDMAContext *rdma_context = NULL;
 void 
 init_setting_with_default(struct Setting *setting) {
     setting->cq_number = 1024;
-    setting->listen_port = 5555;
+    strcpy(setting->listen_port, "5555");
 }
 
 /******************************************************************************
@@ -81,24 +81,31 @@ void release_resources(struct Setting *setting, struct RDMAContext *context) {
  *****************************************************************************/
 int
 init_rdma_listen(struct Setting *setting, struct RDMAContext *context) {
-    struct sockaddr_in          addr;
+    struct rdma_addrinfo    hints,
+                            *res = NULL;
+    int                     ret = 0;
 
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(setting->listen_port);
+    hints.ai_flags = RAI_PASSIVE;
+	hints.ai_port_space = RDMA_PS_TCP;
+    if (0 != rdma_getaddrinfo(NULL, setting->listen_port, &hints, &res)) {
+        perror("rdma_addrinfo");
+        return -1;
+    }
+
+    ret = rdma_create_ep(&context->listen_id, res, NULL, NULL);
+	rdma_freeaddrinfo(res);
+	if (0 != ret) {
+        perror("rdma_create_ep");
+        return -1;
+    }
 
     if ( !(context->cm_channel = rdma_create_event_channel()) ) {
         perror("rdma_create_event_channel");
         return -1;
     }
 
-    if (0 != rdma_create_id(context->cm_channel, &context->listen_id, NULL, RDMA_PS_TCP) )  {
-        perror("rdma_create_id");
-        return -1;
-    }
-
-    if (0 != rdma_bind_addr(context->listen_id, (struct sockaddr *)&addr)) {
-        perror("rdma_bind_addr");
+    if (0 != rdma_migrate_id(context->listen_id, context->cm_channel)) {
+        perror("rdma_migrate_id");
         return -1;
     }
 
@@ -111,6 +118,8 @@ init_rdma_listen(struct Setting *setting, struct RDMAContext *context) {
 
     // Set ibv_context
     context->device_context = context->listen_id->verbs;
+
+    printf("%p\n", context->device_context);
 
     return 0;
 }
