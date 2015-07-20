@@ -100,22 +100,33 @@ init_rdma_listen(struct Setting *setting, struct RDMAContext *context) {
 	attr.cap.max_inline_data = 16;
 	attr.sq_sig_all = 1;
 	
-    ret = rdma_create_ep(&context->listen_id, res, NULL, &attr);
+/*    ret = rdma_create_ep(&context->listen_id, res, NULL, &attr);
 	rdma_freeaddrinfo(res);
 	if (0 != ret) {
         perror("rdma_create_ep");
         return -1;
     }
+*/
 
     if ( !(context->cm_channel = rdma_create_event_channel()) ) {
         perror("rdma_create_event_channel");
         return -1;
     }
 
-    if (0 != rdma_migrate_id(context->listen_id, context->cm_channel)) {
+    if ( 0 != rdma_create_id(context->cm_channel, &context->listen_id, NULL, RDMA_PS_TCP)) {
+        perror("rdma_create_id");
+        return -1;
+    }
+
+    if (0 != rdma_bind_addr(context->listen_id, res->ai_src_addr)) {
+        return -1;
+    }
+
+/*    if (0 != rdma_migrate_id(context->listen_id, context->cm_channel)) {
         perror("rdma_migrate_id");
         return -1;
     }
+*/
 
     if (0 != rdma_listen(context->listen_id, 0)) {
         perror("rdma_listen");
@@ -191,6 +202,7 @@ init_and_dispatch_event(struct RDMAContext *context) {
 void 
 get_connect_request(struct rdma_cm_id *id) {
     struct ibv_mr           *mr = NULL;
+/*
     struct ibv_qp_init_attr attr;
 
     memset(&attr, 0, sizeof(attr));
@@ -205,7 +217,7 @@ get_connect_request(struct rdma_cm_id *id) {
         perror("rdma_create_qp");
         return;
     }
-
+*/
     if ( !(mr = rdma_reg_msgs(id, recv_msg, MAXLEN)) ) {
         perror("rdma_reg_msgs");
         return;
@@ -257,6 +269,7 @@ rdma_cm_event_handle(int fd, short lib_event, void *arg) {
 }
 
 int main(int argc, char *argv[]) {
+
     struct Setting      *setting = calloc(1, sizeof(struct Setting));
     struct RDMAContext  *context = calloc(1, sizeof(struct RDMAContext)); 
     rdma_context = context;
@@ -266,6 +279,7 @@ int main(int argc, char *argv[]) {
     if (0 != init_rdma_listen(setting, context)) return -1;
     if (0 != init_rdma_shared_resources(setting, context)) return -1;
     if (0 != init_and_dispatch_event(context)) return -1;
+    
 
     release_resources(setting, context);
     return 0;
