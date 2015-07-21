@@ -114,6 +114,11 @@ init_rdma_listen(struct Setting *setting, struct RDMAContext *context) {
         return -1;
     }
 
+    if ( !(context->cm_channel = rdma_create_event_channel() ) ) {
+        perror("rdma_create_event_channel");
+        return 0;
+    }
+
     if (0 != rdma_migrate_id(context->listen_id, context->cm_channel)) {
         perror("rdma_migrate_id");
         return -1;
