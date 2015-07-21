@@ -30,6 +30,8 @@ struct RDMAContext {
 };
 
 struct CMInformation {
+    struct rdma_cm_id           *id;
+
     struct ibv_comp_channel     *comp_channel;
     struct ibv_pd               *pd;
     struct ibv_cq               *cq;
@@ -254,6 +256,7 @@ handle_connect_request(struct rdma_cm_id *id) {
     }
 
     id->context = info;
+    info->id    = id;
 
     memset(&init_qp_attr, 0, sizeof(init_qp_attr)); 
 	init_qp_attr.cap.max_send_wr = g_setting->cq_number;
@@ -277,7 +280,7 @@ handle_connect_request(struct rdma_cm_id *id) {
         return;
     }
 
-    if (0 != rdma_post_recv(id, NULL, recv_msg, MAXLEN, info->mr)) {
+    if (0 != rdma_post_recv(id, info, recv_msg, MAXLEN, info->mr)) {
         release_cm_info(info);
         perror("rdma_post_recv");
         return;
@@ -313,15 +316,49 @@ establish_poll_handler(struct rdma_cm_id *id) {
  *
  *****************************************************************************/
 void 
+handle_work_complete(struct ibv_wc *wc) {
+    struct CMInformation *info = (struct CMInformation*)wc->wr_id;
+
+    if (IBV_WC_SUCCESS != wc->status) {
+        printf("bad wc!\n");
+        return;
+    }
+
+    if (IBV_WC_RECV & wc->opcode) {
+        printf("server has received: %s\n", (char*)info->mr->addr);
+        return;
+    }
+
+    switch (wc->opcode) {
+        case IBV_WC_SEND:
+            printf("server has sent: %s\n", (char*)info->mr->addr);
+            break;
+        case IBV_WC_RDMA_WRITE:
+            break;
+        case IBV_WC_RDMA_READ:
+            break;
+        default:
+            break;
+    }
+}
+
+/******************************************************************************
+ * Description
+ *
+ *****************************************************************************/
+void 
 poll_event_handle(int fd, short lib_event, void *arg) {
     struct CMInformation    *info = arg;
     struct ibv_cq           *cq = NULL;
     struct ibv_wc           wc[10];
 
+    int     cqe = 0, i = 0;
+    void    *null = NULL;
+
     memset(&cq, 0, sizeof(cq));
     memset(wc, 0, sizeof(wc));
 
-    if (0 != ibv_get_cq_event(info->comp_channel, &cq, NULL)) {
+    if (0 != ibv_get_cq_event(info->comp_channel, &cq, null)) {
         perror("ibv_get_cq_event");
         return;
     }
@@ -332,9 +369,13 @@ poll_event_handle(int fd, short lib_event, void *arg) {
         return;
     }
 
-    if (0 != ibv_poll_cq(cq, 10, wc)) {
+    if (-1 != ibv_poll_cq(cq, 10, wc)) {
         perror("ibv_poll_cq");
         return;
+    }
+
+    for (i = 0; i < cqe; ++i) {
+        handle_work_complete(wc);
     }
 
     printf("Get wc!");
