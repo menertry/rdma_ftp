@@ -35,7 +35,8 @@ struct CMInformation {
     struct ibv_comp_channel     *comp_channel;
     struct ibv_pd               *pd;
     struct ibv_cq               *cq;
-    struct ibv_mr               *mr;
+    struct ibv_mr               *send_mr;
+    struct ibv_mr               *recv_mr;
     
     struct event                *poll_event;
 };
@@ -48,7 +49,9 @@ void poll_event_handle(int fd, short lib_event, void *arg);
  *
  *****************************************************************************/
 
-char    recv_msg[MAXLEN] = "recive test!";
+char   recv_msg[MAXLEN] = "recive test!";
+char   send_msg[MAXLEN] = "send test!";
+
 struct RDMAContext *g_rdma_context = NULL;
 struct Setting *g_setting = NULL;
 
@@ -274,13 +277,13 @@ handle_connect_request(struct rdma_cm_id *id) {
         return;
     }
 
-    if ( !(info->mr = rdma_reg_msgs(id, recv_msg, MAXLEN)) ) {
+    if ( !(info->recv_mr = rdma_reg_msgs(id, recv_msg, MAXLEN)) ) {
         release_cm_info(info);
         perror("rdma_reg_msgs");
         return;
     }
 
-    if (0 != rdma_post_recv(id, info, recv_msg, MAXLEN, info->mr)) {
+    if (0 != rdma_post_recv(id, info, recv_msg, MAXLEN, info->recv_mr)) {
         release_cm_info(info);
         perror("rdma_post_recv");
         return;
@@ -325,13 +328,13 @@ handle_work_complete(struct ibv_wc *wc) {
     }
 
     if (IBV_WC_RECV & wc->opcode) {
-        printf("server has received: %s\n", (char*)info->mr->addr);
+        printf("server has received: %s\n", (char*)info->recv_mr->addr);
         return;
     }
 
     switch (wc->opcode) {
         case IBV_WC_SEND:
-            printf("server has sent: %s\n", (char*)info->mr->addr);
+            printf("server has sent: %s\n", (char*)info->send_mr->addr);
             break;
         case IBV_WC_RDMA_WRITE:
             break;
@@ -358,7 +361,7 @@ poll_event_handle(int fd, short lib_event, void *arg) {
     memset(&cq, 0, sizeof(cq));
     memset(wc, 0, sizeof(wc));
 
-    if (0 != ibv_get_cq_event(info->comp_channel, &cq, null)) {
+    if (0 != ibv_get_cq_event(info->comp_channel, &cq, &null)) {
         perror("ibv_get_cq_event");
         return;
     }
@@ -369,16 +372,16 @@ poll_event_handle(int fd, short lib_event, void *arg) {
         return;
     }
 
-    if (-1 != ibv_poll_cq(cq, 10, wc)) {
+    if (-1 == ibv_poll_cq(cq, 10, wc)) {
         perror("ibv_poll_cq");
         return;
     }
 
+    printf("Get cqe! %d\n", cqe);
+
     for (i = 0; i < cqe; ++i) {
         handle_work_complete(wc);
     }
-
-    printf("Get wc!");
 }
 
 /******************************************************************************
@@ -403,12 +406,26 @@ rdma_cm_event_handle(int fd, short lib_event, void *arg) {
             break;
 
         case RDMA_CM_EVENT_ESTABLISHED:
+            info = (struct CMInformation*)(cm_event->id->context);
+
+            if ( !(info->send_mr = rdma_reg_msgs(cm_event->id, send_msg, MAXLEN)) ) {
+                perror("rdma_reg_msgs");
+                return;
+            }
+
+            if (0 != rdma_post_send(cm_event->id, info, send_msg, MAXLEN, 
+                        info->send_mr, IBV_SEND_SOLICITED)) {
+                perror("rdma_post_recv");
+                return;
+            }
+
             establish_poll_handler(cm_event->id);
             break;
 
         case RDMA_CM_EVENT_DISCONNECTED:
             info = (struct CMInformation*)(cm_event->id->context);
-            rdma_dereg_mr(info->mr);
+            rdma_dereg_mr(info->send_mr);
+            rdma_dereg_mr(info->recv_mr);
             release_cm_info(info);
 
             rdma_disconnect(cm_event->id);
