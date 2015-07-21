@@ -215,6 +215,11 @@ preamble_qp(struct ibv_context *device_context, struct CMInformation *info) {
         return -1;
     }
 
+    if (0 != ibv_req_notify_cq(info->cq, 0)) {
+        perror("ibv_reg_notify_cq");
+        return -1;
+    }
+
     return 0;
 }
 
@@ -239,7 +244,6 @@ release_cm_info(struct CMInformation *info) {
  *****************************************************************************/
 void 
 handle_connect_request(struct rdma_cm_id *id) {
-    struct ibv_mr           *mr = NULL;
     struct CMInformation    *info = NULL;
     struct ibv_qp_init_attr init_qp_attr;
 
@@ -267,13 +271,13 @@ handle_connect_request(struct rdma_cm_id *id) {
         return;
     }
 
-    if ( !(mr = rdma_reg_msgs(id, recv_msg, MAXLEN)) ) {
+    if ( !(info->mr = rdma_reg_msgs(id, recv_msg, MAXLEN)) ) {
         release_cm_info(info);
         perror("rdma_reg_msgs");
         return;
     }
 
-    if (0 != rdma_post_recv(id, NULL, recv_msg, MAXLEN, mr)) {
+    if (0 != rdma_post_recv(id, NULL, recv_msg, MAXLEN, info->mr)) {
         release_cm_info(info);
         perror("rdma_post_recv");
         return;
@@ -319,6 +323,12 @@ poll_event_handle(int fd, short lib_event, void *arg) {
 
     if (0 != ibv_get_cq_event(info->comp_channel, &cq, NULL)) {
         perror("ibv_get_cq_event");
+        return;
+    }
+    ibv_ack_cq_events(cq, 1);
+
+    if (0 != ibv_req_notify_cq(cq, 0)) {
+        perror("ibv_reg_notify_cq");
         return;
     }
 
