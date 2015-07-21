@@ -33,9 +33,13 @@ struct CMInformation {
     struct ibv_comp_channel     *comp_channel;
     struct ibv_pd               *pd;
     struct ibv_cq               *cq;
+    struct ibv_mr               *mr;
+    
+    struct event                *poll_event;
 };
 
 void rdma_cm_event_handle(int fd, short lib_event, void *arg);
+void poll_event_handle(int fd, short lib_event, void *arg);
 
 /******************************************************************************
  * Test
@@ -230,10 +234,11 @@ release_cm_info(struct CMInformation *info) {
 
 /******************************************************************************
  * Description
+ * Create qp with id, then complete the connection 
  *
  *****************************************************************************/
 void 
-get_connect_request(struct rdma_cm_id *id) {
+handle_connect_request(struct rdma_cm_id *id) {
     struct ibv_mr           *mr = NULL;
     struct CMInformation    *info = NULL;
     struct ibv_qp_init_attr init_qp_attr;
@@ -280,7 +285,49 @@ get_connect_request(struct rdma_cm_id *id) {
         return;
     }
 
-    printf("Establish ok!\n");
+    printf("Comlete connection!\n");
+}
+
+/******************************************************************************
+ * Description
+ *
+ *****************************************************************************/
+void
+establish_poll_handler(struct rdma_cm_id *id) {
+    struct CMInformation *info = id->context;
+
+    info->poll_event = calloc(1, sizeof(struct event)); 
+
+    event_set(info->poll_event, info->comp_channel->fd, EV_READ | EV_PERSIST, 
+            poll_event_handle, info);
+    event_base_set(g_rdma_context->base, info->poll_event);
+    event_add(info->poll_event, NULL);
+}
+
+/******************************************************************************
+ * Description
+ *
+ *****************************************************************************/
+void 
+poll_event_handle(int fd, short lib_event, void *arg) {
+    struct CMInformation    *info = arg;
+    struct ibv_cq           *cq = NULL;
+    struct ibv_wc           wc[10];
+
+    memset(&cq, 0, sizeof(cq));
+    memset(wc, 0, sizeof(wc));
+
+    if (0 != ibv_get_cq_event(info->comp_channel, &cq, NULL)) {
+        perror("ibv_get_cq_event");
+        return;
+    }
+
+    if (0 != ibv_poll_cq(cq, 10, wc)) {
+        perror("ibv_poll_cq");
+        return;
+    }
+
+    printf("Get wc!");
 }
 
 /******************************************************************************
@@ -289,7 +336,9 @@ get_connect_request(struct rdma_cm_id *id) {
  *****************************************************************************/
 void 
 rdma_cm_event_handle(int fd, short lib_event, void *arg) {
-    struct rdma_cm_event *cm_event;
+    struct rdma_cm_event    *cm_event = NULL;
+    struct CMInformation    *info = NULL;
+
     if (0 != rdma_get_cm_event(g_rdma_context->cm_channel, &cm_event)) {
         perror("rdma_get_cm_event");
         return;
@@ -299,16 +348,29 @@ rdma_cm_event_handle(int fd, short lib_event, void *arg) {
 
     switch (cm_event->event) {
         case RDMA_CM_EVENT_CONNECT_REQUEST:
-            get_connect_request(cm_event->id);
+            handle_connect_request(cm_event->id);
             break;
 
         case RDMA_CM_EVENT_ESTABLISHED:
             break;
 
         case RDMA_CM_EVENT_DISCONNECTED:
+            info = (struct CMInformation*)(cm_event->id->context);
+            rdma_dereg_mr(info->mr);
+            release_cm_info(info);
+
+            rdma_disconnect(cm_event->id);
             break;
 
+        case RDMA_CM_EVENT_ADDR_ERROR:
+        case RDMA_CM_EVENT_ROUTE_ERROR:
+        case RDMA_CM_EVENT_CONNECT_ERROR:
+        case RDMA_CM_EVENT_UNREACHABLE:
+        case RDMA_CM_EVENT_REJECTED:
+            printf("error: %d\n", cm_event->status);
+	
         default:
+            printf("---> ingoring");
             break;
     }
 
