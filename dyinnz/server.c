@@ -29,6 +29,12 @@ struct RDMAContext {
     struct event                listen_event;
 };
 
+struct CMInformation {
+    struct ibv_comp_channel     *comp_channel;
+    struct ibv_pd               *pd;
+    struct ibv_cq               *cq;
+};
+
 void rdma_cm_event_handle(int fd, short lib_event, void *arg);
 
 /******************************************************************************
@@ -37,7 +43,8 @@ void rdma_cm_event_handle(int fd, short lib_event, void *arg);
  *****************************************************************************/
 
 char    recv_msg[MAXLEN] = "recive test!";
-struct RDMAContext *rdma_context = NULL;
+struct RDMAContext *g_rdma_context = NULL;
+struct Setting *g_setting = NULL;
 
 /******************************************************************************
  * Description
@@ -62,11 +69,11 @@ void release_resources(struct Setting *setting, struct RDMAContext *context) {
 
     rdma_destroy_id(context->listen_id); 
     rdma_destroy_event_channel(context->cm_channel);
-
+/*
     ibv_destroy_cq(context->cq);
     ibv_dealloc_pd(context->pd);
     ibv_destroy_comp_channel(context->comp_channel);
-
+*/
     free(setting);
     free(context);
 }
@@ -100,33 +107,17 @@ init_rdma_listen(struct Setting *setting, struct RDMAContext *context) {
 	attr.cap.max_inline_data = 16;
 	attr.sq_sig_all = 1;
 	
-/*    ret = rdma_create_ep(&context->listen_id, res, NULL, &attr);
+    ret = rdma_create_ep(&context->listen_id, res, NULL, &attr);
 	rdma_freeaddrinfo(res);
 	if (0 != ret) {
         perror("rdma_create_ep");
         return -1;
     }
-*/
 
-    if ( !(context->cm_channel = rdma_create_event_channel()) ) {
-        perror("rdma_create_event_channel");
-        return -1;
-    }
-
-    if ( 0 != rdma_create_id(context->cm_channel, &context->listen_id, NULL, RDMA_PS_TCP)) {
-        perror("rdma_create_id");
-        return -1;
-    }
-
-    if (0 != rdma_bind_addr(context->listen_id, res->ai_src_addr)) {
-        return -1;
-    }
-
-/*    if (0 != rdma_migrate_id(context->listen_id, context->cm_channel)) {
+    if (0 != rdma_migrate_id(context->listen_id, context->cm_channel)) {
         perror("rdma_migrate_id");
         return -1;
     }
-*/
 
     if (0 != rdma_listen(context->listen_id, 0)) {
         perror("rdma_listen");
@@ -134,11 +125,6 @@ init_rdma_listen(struct Setting *setting, struct RDMAContext *context) {
     }
 
     printf("Listening on port %d\n", ntohs(rdma_get_src_port(context->listen_id)) );
-
-    // Set ibv_context
-    context->device_context = context->listen_id->verbs;
-
-    printf("%p\n", context->device_context);
 
     return 0;
 }
@@ -183,16 +169,58 @@ init_and_dispatch_event(struct RDMAContext *context) {
     context->base = event_base_new();
     memset(&context->listen_event, 0, sizeof(struct event));
 
-    // TODO
+    /* TODO */
     event_set(&context->listen_event, context->cm_channel->fd, EV_READ | EV_PERSIST, 
             rdma_cm_event_handle, NULL);
     event_base_set(context->base, &context->listen_event);
     event_add(&context->listen_event, NULL);
 
-    // main loop
+    /* main loop */
     event_base_dispatch(context->base);
 
     return 0;
+}
+
+
+/******************************************************************************
+ * Description
+ * Create cc, pd, and cq, remember releasing them
+ *
+ *****************************************************************************/
+int
+preamble_qp(struct ibv_context *device_context, struct CMInformation *info) {
+
+    if ( !(info->comp_channel = ibv_create_comp_channel(device_context)) ) {
+        perror("ibv_create_comp_channel");
+        return -1;
+    }
+
+    if ( !(info->pd = ibv_alloc_pd(device_context)) ) {
+        perror("ibv_alloc_pd");
+        return -1;
+    }
+
+    if ( !(info->cq = ibv_create_cq(device_context, 
+                    g_setting->cq_number, NULL, info->comp_channel, 0)) ) {
+        perror("ibv_create_cq");
+        return -1;
+    }
+
+    return 0;
+}
+
+/******************************************************************************
+ * Description
+ * Release cc, pd, cq
+ *
+ *****************************************************************************/
+void
+release_cm_info(struct CMInformation *info) {
+    ibv_destroy_cq(info->cq);
+    ibv_dealloc_pd(info->pd);
+    ibv_destroy_comp_channel(info->comp_channel);
+
+    free(info);
 }
 
 /******************************************************************************
@@ -202,33 +230,47 @@ init_and_dispatch_event(struct RDMAContext *context) {
 void 
 get_connect_request(struct rdma_cm_id *id) {
     struct ibv_mr           *mr = NULL;
-/*
-    struct ibv_qp_init_attr attr;
+    struct CMInformation    *info = NULL;
+    struct ibv_qp_init_attr init_qp_attr;
 
-    memset(&attr, 0, sizeof(attr));
-    attr.cap.max_send_wr = attr.cap.max_recv_wr = 1;
-    attr.cap.max_send_sge = attr.cap.max_recv_sge = 1;
-    attr.cap.max_inline_data = MAXLEN;
-    attr.sq_sig_all = 1;
-    attr.qp_type = IBV_QPT_RC;
+    info = calloc(1, sizeof(struct CMInformation));
+    if (0 != preamble_qp(id->verbs, info)) {
+        release_cm_info(info);
+        return;
+    }
 
-    // TODO: release it
-    if (0 != rdma_create_qp(id, NULL, &attr)) {
+    id->context = info;
+
+    memset(&init_qp_attr, 0, sizeof(init_qp_attr)); 
+	init_qp_attr.cap.max_send_wr = g_setting->cq_number;
+	init_qp_attr.cap.max_recv_wr = g_setting->cq_number;
+	init_qp_attr.cap.max_send_sge = 1;
+	init_qp_attr.cap.max_recv_sge = 1;
+	init_qp_attr.sq_sig_all = 1;
+	init_qp_attr.qp_type = IBV_QPT_RC;
+	init_qp_attr.send_cq = info->cq;
+	init_qp_attr.recv_cq = info->cq;
+
+    if (0 != rdma_create_qp(id, info->pd, &init_qp_attr)) {
+        release_cm_info(info);
         perror("rdma_create_qp");
         return;
     }
-*/
+
     if ( !(mr = rdma_reg_msgs(id, recv_msg, MAXLEN)) ) {
+        release_cm_info(info);
         perror("rdma_reg_msgs");
         return;
     }
 
     if (0 != rdma_post_recv(id, NULL, recv_msg, MAXLEN, mr)) {
+        release_cm_info(info);
         perror("rdma_post_recv");
         return;
     }
 
     if (0 != rdma_accept(id, NULL)) {
+        release_cm_info(info);
         perror("rdma_accept");
         return;
     }
@@ -243,7 +285,7 @@ get_connect_request(struct rdma_cm_id *id) {
 void 
 rdma_cm_event_handle(int fd, short lib_event, void *arg) {
     struct rdma_cm_event *cm_event;
-    if (0 != rdma_get_cm_event(rdma_context->cm_channel, &cm_event)) {
+    if (0 != rdma_get_cm_event(g_rdma_context->cm_channel, &cm_event)) {
         perror("rdma_get_cm_event");
         return;
     }
@@ -272,12 +314,14 @@ int main(int argc, char *argv[]) {
 
     struct Setting      *setting = calloc(1, sizeof(struct Setting));
     struct RDMAContext  *context = calloc(1, sizeof(struct RDMAContext)); 
-    rdma_context = context;
+
+    g_rdma_context = context;
+    g_setting = setting;
 
     init_setting_with_default(setting);
 
     if (0 != init_rdma_listen(setting, context)) return -1;
-    if (0 != init_rdma_shared_resources(setting, context)) return -1;
+/*    if (0 != init_rdma_shared_resources(setting, context)) return -1; */
     if (0 != init_and_dispatch_event(context)) return -1;
     
 
