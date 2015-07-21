@@ -9,7 +9,7 @@
 
 #include <event.h>
 
-#define MAXLEN 1024
+#define MAXLEN 16
 
 struct Setting {
     int         cq_number;
@@ -372,7 +372,7 @@ poll_event_handle(int fd, short lib_event, void *arg) {
         return;
     }
 
-    if (-1 == ibv_poll_cq(cq, 10, wc)) {
+    if ( -1 == (cqe = ibv_poll_cq(cq, 10, wc)) ) {
         perror("ibv_poll_cq");
         return;
     }
@@ -439,7 +439,7 @@ rdma_cm_event_handle(int fd, short lib_event, void *arg) {
             printf("error: %d\n", cm_event->status);
 	
         default:
-            printf("---> ingoring");
+            printf("---> ingoring\n");
             break;
     }
 
