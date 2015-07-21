@@ -352,6 +352,7 @@ rdma_cm_event_handle(int fd, short lib_event, void *arg) {
             break;
 
         case RDMA_CM_EVENT_ESTABLISHED:
+            establish_poll_handler(cm_event->id);
             break;
 
         case RDMA_CM_EVENT_DISCONNECTED:
